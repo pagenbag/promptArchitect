@@ -199,13 +199,13 @@ export default function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Tab switching: Ctrl+Tab and Ctrl+Shift+Tab
-      if (e.ctrlKey && e.key === 'Tab') {
+      // Tab switching: Alt+ArrowRight and Alt+ArrowLeft
+      if (e.altKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
         e.preventDefault();
         const currentIndex = openProjectIds.indexOf(selectedProjectId || '');
         if (currentIndex !== -1) {
           let nextIndex;
-          if (e.shiftKey) {
+          if (e.key === 'ArrowLeft') {
             nextIndex = (currentIndex - 1 + openProjectIds.length) % openProjectIds.length;
           } else {
             nextIndex = (currentIndex + 1) % openProjectIds.length;
@@ -214,8 +214,8 @@ export default function App() {
         }
       }
 
-      // Tab selection: Ctrl+1 to Ctrl+9
-      if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
+      // Tab selection: Alt+1 to Alt+9
+      if (e.altKey && /^[1-9]$/.test(e.key)) {
         const index = parseInt(e.key) - 1;
         if (index < openProjectIds.length) {
           e.preventDefault();
@@ -832,18 +832,17 @@ export default function App() {
 
         {/* Keyboard Shortcuts Dialog */}
         <Dialog open={isShortcutsDialogOpen} onOpenChange={setIsShortcutsDialogOpen}>
-          <DialogContent className="max-w-2xl bg-background border-border shadow-2xl">
+          <DialogContent className="max-w-4xl bg-background border-border shadow-2xl">
             <DialogHeader>
               <DialogTitle className="text-2xl font-serif italic tracking-wide">Keyboard Shortcuts</DialogTitle>
             </DialogHeader>
-            <div className="grid grid-cols-2 gap-8 py-6">
+            <div className="grid grid-cols-2 gap-12 py-6">
               <div className="space-y-4">
                 <h3 className="text-xs font-bold uppercase tracking-[2px] text-accent">Navigation</h3>
                 <div className="space-y-3">
-                  <ShortcutItem keys={["Ctrl", "Tab"]} label="Next Tab" />
-                  <ShortcutItem keys={["Ctrl", "Shift", "Tab"]} label="Previous Tab" />
-                  <ShortcutItem keys={["Ctrl", "1-9"]} label="Switch to Tab 1-9" />
-                  <ShortcutItem keys={["Ctrl", "Click"]} label="Open in New Tab" />
+                  <ShortcutItem keys={["Alt", "→"]} label="Next Tab" />
+                  <ShortcutItem keys={["Alt", "←"]} label="Previous Tab" />
+                  <ShortcutItem keys={["Alt", "1-9"]} label="Switch to Tab 1-9" />
                   <ShortcutItem keys={["Ctrl", "W"]} label="Close Current Tab" />
                 </div>
               </div>
