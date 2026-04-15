@@ -1018,9 +1018,10 @@ export default function App() {
                 </div>
               </header>
 
-              <ScrollArea className="flex-1 min-h-0" ref={scrollAreaRef}>
-                <div className="max-w-5xl mx-auto py-16 px-12 space-y-6">
-                {selectedProject.blocks.map((block, index) => (
+              <div className="flex-1 min-h-0 relative">
+                <ScrollArea className="h-full" ref={scrollAreaRef}>
+                  <div className="max-w-5xl mx-auto py-16 px-12 space-y-6">
+                  {selectedProject.blocks.map((block, index) => (
                     <div key={block.id} className="group relative">
                       {/* Insertion Point Above (only for first block) */}
                       {index === 0 && (
@@ -1090,6 +1091,7 @@ export default function App() {
                   <div className="h-32" /> {/* Spacer */}
                 </div>
               </ScrollArea>
+            </div>
 
               <footer className="h-10 border-t border-border bg-muted/30 px-12 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground font-medium shrink-0">
                 <div className="flex items-center gap-4">
