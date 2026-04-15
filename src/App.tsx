@@ -35,7 +35,8 @@ import {
   Square,
   Keyboard,
   X,
-  Scissors
+  Scissors,
+  Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,7 @@ import { Label } from '@/components/ui/label';
 import { Block, Project } from './types';
 import { cn } from '@/lib/utils';
 import { GoogleGenAI } from "@google/genai";
+import { getStorageAdapter, StorageAdapter } from './services/storageService';
 
 const STORAGE_KEY = 'prompt_architect_data';
 const THEME_KEY = 'prompt_architect_theme';
@@ -140,6 +142,9 @@ export default function App() {
   const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
   const [isShortcutsDialogOpen, setIsShortcutsDialogOpen] = useState(false);
   
+  const storageAdapterRef = useRef<StorageAdapter | null>(null);
+  const [isStorageLocal, setIsStorageLocal] = useState(false);
+
   // History for Undo/Redo
   const [history, setHistory] = useState<Project[][]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -161,6 +166,75 @@ export default function App() {
 
   const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), []);
 
+  // Load data
+  useEffect(() => {
+    const initStorage = async () => {
+      const adapter = await getStorageAdapter();
+      storageAdapterRef.current = adapter;
+      setIsStorageLocal(adapter.isLocal);
+      
+      const savedTheme = localStorage.getItem(THEME_KEY) as 'light' | 'dark' | null;
+      if (savedTheme) setTheme(savedTheme);
+
+      let data = await adapter.loadProjects();
+      
+      // Migration: Browser -> Local FS
+      if (adapter.isLocal) {
+        const browserData = localStorage.getItem(STORAGE_KEY);
+        if (browserData && (!data || data.length === 0)) {
+          try {
+            const parsed = JSON.parse(browserData);
+            await adapter.saveProjects(parsed);
+            data = parsed;
+            console.log("Migrated data from browser to local file system");
+          } catch (e) {
+            console.error("Migration failed", e);
+          }
+        }
+      }
+
+      if (data && data.length > 0) {
+        setProjects(data);
+        
+        const savedTabs = localStorage.getItem(OPEN_TABS_KEY);
+        if (savedTabs) {
+          try {
+            const tabIds = JSON.parse(savedTabs);
+            const validTabIds = tabIds.filter((id: string) => data!.some((p: Project) => p.id === id));
+            setOpenProjectIds(validTabIds);
+          } catch (e) {}
+        }
+
+        const lastSelectedId = localStorage.getItem(LAST_PROJECT_KEY);
+        if (lastSelectedId && data.some((p: Project) => p.id === lastSelectedId)) {
+          setSelectedProjectId(lastSelectedId);
+          setOpenProjectIds(prev => prev.includes(lastSelectedId) ? prev : [...prev, lastSelectedId]);
+        } else {
+          setSelectedProjectId(data[0].id);
+          setOpenProjectIds([data[0].id]);
+        }
+      } else {
+        // Create a default project
+        const defaultProject: Project = {
+          id: crypto.randomUUID(),
+          name: 'Welcome Project',
+          parentId: null,
+          blocks: [
+            { id: crypto.randomUUID(), content: '# Welcome to Prompt Architect\n\nThis is a block-based prompt manager. You can organize your AI agent instructions into structured projects.' },
+            { id: crypto.randomUUID(), content: '## How to use:\n\n1. Create folders in the sidebar to organize projects.\n2. Add blocks to your project to separate different parts of your prompt.\n3. Hover over a block to copy it individually, or use "Copy All" to get the whole prompt.' }
+          ],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        setProjects([defaultProject]);
+        setSelectedProjectId(defaultProject.id);
+        setOpenProjectIds([defaultProject.id]);
+      }
+    };
+
+    initStorage();
+  }, []);
+
   // History Management
   const undo = useCallback(() => {
     if (historyIndex > 0) {
@@ -181,59 +255,6 @@ export default function App() {
       lastSavedProjects.current = JSON.stringify(nextProjects);
     }
   }, [history, historyIndex]);
-
-  // Load data from localStorage
-  useEffect(() => {
-    const savedData = localStorage.getItem(STORAGE_KEY);
-    const savedTheme = localStorage.getItem(THEME_KEY) as 'light' | 'dark' | null;
-    
-    if (savedTheme) {
-      setTheme(savedTheme);
-    }
-
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData);
-        setProjects(parsed);
-        
-        const savedTabs = localStorage.getItem(OPEN_TABS_KEY);
-        if (savedTabs) {
-          const tabIds = JSON.parse(savedTabs);
-          // Filter out any IDs that might have been deleted
-          const validTabIds = tabIds.filter((id: string) => parsed.some((p: Project) => p.id === id));
-          setOpenProjectIds(validTabIds);
-        }
-
-        const lastSelectedId = localStorage.getItem(LAST_PROJECT_KEY);
-        if (lastSelectedId && parsed.some((p: Project) => p.id === lastSelectedId)) {
-          setSelectedProjectId(lastSelectedId);
-          // Ensure it's in open tabs
-          setOpenProjectIds(prev => prev.includes(lastSelectedId) ? prev : [...prev, lastSelectedId]);
-        } else if (parsed.length > 0) {
-          setSelectedProjectId(parsed[0].id);
-          setOpenProjectIds([parsed[0].id]);
-        }
-      } catch (e) {
-        console.error('Failed to parse saved data', e);
-      }
-    } else {
-      // Create a default project
-      const defaultProject: Project = {
-        id: crypto.randomUUID(),
-        name: 'Welcome Project',
-        parentId: null,
-        blocks: [
-          { id: crypto.randomUUID(), content: '# Welcome to Prompt Architect\n\nThis is a block-based prompt manager. You can organize your AI agent instructions into structured projects.' },
-          { id: crypto.randomUUID(), content: '## How to use:\n\n1. Create folders in the sidebar to organize projects.\n2. Add blocks to your project to separate different parts of your prompt.\n3. Hover over a block to copy it individually, or use "Copy All" to get the whole prompt.' }
-        ],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      setProjects([defaultProject]);
-      setSelectedProjectId(defaultProject.id);
-      setOpenProjectIds([defaultProject.id]);
-    }
-  }, []);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -305,10 +326,10 @@ export default function App() {
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
 
-  // Save data to localStorage
+  // Save data
   useEffect(() => {
-    if (projects.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    if (projects.length > 0 && storageAdapterRef.current) {
+      storageAdapterRef.current.saveProjects(projects);
     }
   }, [projects]);
 
@@ -1079,7 +1100,10 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground/50">Ctrl+Enter to add block</span>
                   <Separator orientation="vertical" className="h-3 bg-border" />
-                  <span>LocalStorage Engine v1.0</span>
+                  <div className="flex items-center gap-1.5">
+                    {isStorageLocal ? <Save size={10} className="text-accent" /> : <div className="w-2 h-2 rounded-full bg-muted-foreground/30" />}
+                    <span>{isStorageLocal ? 'Local FS Engine v1.1' : 'LocalStorage Engine v1.0'}</span>
+                  </div>
                 </div>
               </footer>
             </>
