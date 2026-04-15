@@ -307,12 +307,14 @@ export default function App() {
               </Button>
 
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-accent" onClick={e => e.stopPropagation()}>
-                    <MoreVertical size={12} />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-muted border-border">
+                <DropdownMenuTrigger
+                  render={
+                    <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-accent" onClick={e => e.stopPropagation()}>
+                      <MoreVertical size={12} />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="end" className="bg-popover border-border">
                   <DropdownMenuItem onClick={() => handleDeleteProject(item.id)} className="text-destructive focus:bg-destructive/10 focus:text-destructive">
                     <Trash2 className="mr-2 h-4 w-4" />
                     Delete
