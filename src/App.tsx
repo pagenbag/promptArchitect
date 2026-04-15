@@ -56,9 +56,9 @@ import {
   DialogFooter 
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Block, Project } from './types';
 import { cn } from '@/lib/utils';
+import { GoogleGenAI } from "@google/genai";
 
 const STORAGE_KEY = 'prompt_architect_data';
 const THEME_KEY = 'prompt_architect_theme';
@@ -151,6 +151,8 @@ export default function App() {
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [targetParentId, setTargetParentId] = useState<string | null>(null);
+
+  const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), []);
 
   // Load data from localStorage
   useEffect(() => {
@@ -524,9 +526,77 @@ export default function App() {
     if (!project) return;
 
     const newBlocks = project.blocks.map(b => 
-      b.id === blockId ? { ...b, content } : b
+      b.id === blockId ? { ...b, content, isDirty: true } : b
     );
     updateProjectBlocks(projectId, newBlocks);
+  };
+
+  const generateBlockDescription = async (projectId: string, blockId: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+    const block = project.blocks.find(b => b.id === blockId);
+    if (!block || !block.content.trim() || !block.isDirty) return;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Generate a very short (2-4 words) description of the following content. Examples: "Add search bar", "Fix auto indentation", "Update styles". Content: ${block.content}`,
+      });
+      
+      const description = response.text?.trim().replace(/^["']|["']$/g, '');
+      if (description) {
+        const newBlocks = project.blocks.map(b => 
+          b.id === blockId ? { ...b, description, isDirty: false } : b
+        );
+        updateProjectBlocks(projectId, newBlocks);
+      }
+    } catch (error) {
+      console.error("Failed to generate description:", error);
+    }
+  };
+
+  const expandPromptWithAI = async (projectId: string, blockId: string, selectedText?: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+    const block = project.blocks.find(b => b.id === blockId);
+    if (!block) return;
+
+    const textToExpand = selectedText || block.content;
+    if (!textToExpand.trim()) return;
+
+    // Set thinking state
+    updateProjectBlocks(projectId, project.blocks.map(b => 
+      b.id === blockId ? { ...b, isThinking: true } : b
+    ));
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: `Expand the following text into clear, concise, and structured instructions that an AI agent can use to build the described feature or perform the actions. Use markdown if appropriate. Text: ${textToExpand}`,
+      });
+
+      const expandedText = response.text?.trim();
+      if (expandedText) {
+        const newBlocks = project.blocks.map(b => {
+          if (b.id === blockId) {
+            let newContent = b.content;
+            if (selectedText) {
+              newContent = b.content.replace(selectedText, expandedText);
+            } else {
+              newContent = expandedText;
+            }
+            return { ...b, content: newContent, isThinking: false, isDirty: true };
+          }
+          return b;
+        });
+        updateProjectBlocks(projectId, newBlocks);
+      }
+    } catch (error) {
+      console.error("Failed to expand prompt:", error);
+      updateProjectBlocks(projectId, project.blocks.map(b => 
+        b.id === blockId ? { ...b, isThinking: false } : b
+      ));
+    }
   };
 
   const toggleBlockDone = (projectId: string, blockId: string) => {
@@ -900,6 +970,8 @@ export default function App() {
                           }
                         }}
                         canDelete={selectedProject.blocks.length > 1}
+                        onBlur={() => generateBlockDescription(selectedProject.id, block.id)}
+                        onAIExpand={(selectedText) => expandPromptWithAI(selectedProject.id, block.id, selectedText)}
                         searchMatches={searchMatches.filter(m => m.blockId === block.id)}
                         activeMatchIndex={
                           currentMatchIndex !== -1 && searchMatches[currentMatchIndex]?.blockId === block.id
@@ -1034,17 +1106,20 @@ interface BlockItemProps {
   onDeleteIfEmpty: () => void;
   onToggleDone: () => void;
   onSplitBlock: (content: string) => void;
+  onBlur: () => void;
+  onAIExpand: (selectedText?: string) => void;
   canDelete: boolean;
   searchMatches: { start: number, end: number }[];
   activeMatchIndex: number | null;
 }
 
 function BlockItem({ 
-  block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, onDeleteIfEmpty, onToggleDone, onSplitBlock, canDelete,
+  block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, onDeleteIfEmpty, onToggleDone, onSplitBlock, onBlur, onAIExpand, canDelete,
   searchMatches, activeMatchIndex
 }: BlockItemProps) {
   const [isCopied, setIsCopied] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevIsFocused = useRef(isFocused);
   const prevActiveMatchIndex = useRef(activeMatchIndex);
@@ -1125,14 +1200,17 @@ function BlockItem({
         <mark 
           key={idx} 
           className={cn(
-            "rounded-sm px-0.5 transition-colors duration-200",
+            "rounded-sm transition-colors duration-200",
             isActive ? "bg-accent text-background" : "bg-accent/30 text-foreground"
           )}
           style={{ 
             fontFamily: 'inherit', 
             fontSize: 'inherit', 
+            fontWeight: 'inherit',
             lineHeight: 'inherit',
-            padding: '0' // Reset padding to avoid width shifts
+            letterSpacing: 'inherit',
+            padding: '0',
+            color: 'transparent'
           }}
         >
           {block.content.substring(match.start, match.end)}
@@ -1147,15 +1225,31 @@ function BlockItem({
     return result;
   };
 
-  const sharedStyles = "w-full min-h-[140px] p-8 pt-14 text-lg font-serif whitespace-pre-wrap break-words border-none ring-0 outline-none transition-none";
+  const handleAIExpand = () => {
+    if (!textareaRef.current) return;
+    const { selectionStart, selectionEnd } = textareaRef.current;
+    if (selectionStart !== selectionEnd) {
+      const selectedText = block.content.substring(selectionStart, selectionEnd);
+      onAIExpand(selectedText);
+    } else {
+      onAIExpand();
+    }
+  };
+
+  const sharedStyles = "w-full min-h-[140px] p-8 pt-14 text-lg font-serif whitespace-pre-wrap break-words border-none ring-0 outline-none transition-none resize-none overflow-hidden";
 
   const sharedInlineStyles: React.CSSProperties = {
-    lineHeight: '1.625',
+    fontSize: '1.125rem', // text-lg
+    lineHeight: '1.75rem', // leading-relaxed
     fontVariantLigatures: 'none',
     fontFeatureSettings: '"liga" 0',
     wordBreak: 'break-word',
-    letterSpacing: 'normal',
-    tabSize: '2'
+    letterSpacing: '0',
+    tabSize: '2',
+    fontFamily: 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+    fontWeight: '400',
+    margin: '0',
+    boxSizing: 'border-box'
   };
 
   const handleKeyDown = (e: any) => {
@@ -1306,20 +1400,68 @@ function BlockItem({
   };
 
   return (
-    <div className={cn(
-      "group/block relative bg-card border border-border rounded-sm shadow-xl transition-all duration-300 overflow-hidden mt-4",
-      isFocused ? "border-muted-foreground/50 ring-1 ring-muted-foreground/10" : "hover:border-muted-foreground/30",
-      block.isDone && "opacity-75 grayscale-[0.5]"
-    )}>
+    <div 
+      className={cn(
+        "group/block relative bg-card border border-border rounded-sm shadow-xl transition-all duration-300 overflow-hidden mt-4",
+        isFocused ? "border-muted-foreground/50 ring-1 ring-muted-foreground/10" : "hover:border-muted-foreground/30",
+        block.isDone && "opacity-75 grayscale-[0.5]",
+        block.isThinking && "opacity-80"
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* Block Description / AI Label */}
+      {(block.description || block.isThinking) && !isFocused && (
+        <div className={cn(
+          "absolute top-2 left-4 z-10 transition-all duration-300",
+          isHovered ? "opacity-40 translate-y-[-2px]" : "opacity-100"
+        )}>
+          <div className="flex items-center gap-2 px-2 py-0.5 bg-muted/80 rounded border border-border/50 backdrop-blur-sm">
+            {block.isThinking ? (
+              <>
+                <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
+                <span className="text-[9px] font-bold uppercase tracking-widest text-accent">AI Thinking...</span>
+              </>
+            ) : (
+              <>
+                <FileText size={10} className="text-muted-foreground" />
+                <span className="text-[10px] font-medium text-muted-foreground italic">{block.description}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className={cn(
-        "absolute top-0 left-0 right-0 h-10 px-3 flex items-center justify-between bg-muted/30 border-b border-border/50 z-10 transition-opacity duration-200",
+        "absolute top-0 left-0 right-0 h-10 px-3 flex items-center justify-between bg-muted/30 border-b border-border/50 z-20 transition-opacity duration-200",
         isFocused ? "opacity-100" : "opacity-0 group-hover/block:opacity-100"
       )}>
         <div className={cn(
           "flex items-center gap-1 transition-opacity duration-200",
           isFocused ? "opacity-100" : "opacity-0 pointer-events-none"
         )}>
+          {/* AI Expand Button */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className={cn("h-7 w-7 text-accent", block.isThinking && "animate-pulse")}
+                onClick={handleAIExpand}
+                disabled={block.isThinking || block.isDone}
+              >
+                <motion.div
+                  animate={block.isThinking ? { rotate: 360 } : {}}
+                  transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+                >
+                  <Settings size={14} />
+                </motion.div>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>AI Expand {hasSelection ? "Selection" : "Block"}</TooltipContent>
+          </Tooltip>
+          <Separator orientation="vertical" className="h-4 mx-1" />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => applyTextAction('bullet')} disabled={block.isDone}>
@@ -1420,10 +1562,11 @@ function BlockItem({
           {renderHighlights()}
         </div>
 
-        <Textarea
+        <textarea
           ref={textareaRef}
           value={block.content}
           onFocus={onFocus}
+          onBlur={onBlur}
           onSelect={checkSelection}
           onMouseUp={checkSelection}
           onKeyUp={checkSelection}
@@ -1432,12 +1575,12 @@ function BlockItem({
             checkSelection();
           }}
           onKeyDown={handleKeyDown}
-          readOnly={block.isDone}
-          placeholder={block.isDone ? "This block is marked as done." : "Begin writing your protocol..."}
+          readOnly={block.isDone || block.isThinking}
+          placeholder={block.isThinking ? "AI is processing..." : block.isDone ? "This block is marked as done." : "Begin writing your protocol..."}
           className={cn(
-            "col-start-1 row-start-1 bg-transparent text-foreground/90 placeholder:text-muted-foreground/30",
+            "col-start-1 row-start-1 bg-transparent text-foreground/90 placeholder:text-muted-foreground/30 field-sizing-content",
             sharedStyles,
-            block.isDone && "cursor-not-allowed text-muted-foreground"
+            (block.isDone || block.isThinking) && "cursor-not-allowed text-muted-foreground"
           )}
           style={sharedInlineStyles}
         />

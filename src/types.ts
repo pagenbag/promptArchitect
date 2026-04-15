@@ -2,6 +2,9 @@ export interface Block {
   id: string;
   content: string;
   isDone?: boolean;
+  description?: string;
+  isDirty?: boolean;
+  isThinking?: boolean;
 }
 
 export interface Project {
