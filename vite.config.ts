@@ -14,10 +14,10 @@ export default defineConfig(({ mode }) => {
       {
         name: 'api-server',
         configureServer(server) {
-          server.middlewares.use(express.json({ limit: '50mb' }));
-          const router = express.Router();
-          setupApiRoutes(router);
-          server.middlewares.use(router);
+          const app = express();
+          app.use(express.json({ limit: '50mb' }));
+          setupApiRoutes(app);
+          server.middlewares.use(app);
         }
       }
     ],
