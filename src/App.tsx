@@ -57,6 +57,7 @@ import { cn } from '@/lib/utils';
 
 const STORAGE_KEY = 'prompt_architect_data';
 const THEME_KEY = 'prompt_architect_theme';
+const LAST_PROJECT_KEY = 'prompt_architect_last_project';
 
 function renumberHierarchical(text: string): string {
   const lines = text.split('\n');
@@ -133,7 +134,11 @@ export default function App() {
       try {
         const parsed = JSON.parse(savedData);
         setProjects(parsed);
-        if (parsed.length > 0 && !selectedProjectId) {
+        
+        const lastSelectedId = localStorage.getItem(LAST_PROJECT_KEY);
+        if (lastSelectedId && parsed.some((p: Project) => p.id === lastSelectedId)) {
+          setSelectedProjectId(lastSelectedId);
+        } else if (parsed.length > 0) {
           setSelectedProjectId(parsed[0].id);
         }
       } catch (e) {
@@ -174,6 +179,13 @@ export default function App() {
     }
   }, [projects]);
 
+  // Save last selected project
+  useEffect(() => {
+    if (selectedProjectId) {
+      localStorage.setItem(LAST_PROJECT_KEY, selectedProjectId);
+    }
+  }, [selectedProjectId]);
+
   const selectedProject = useMemo(() => 
     projects.find(p => p.id === selectedProjectId) || null
   , [projects, selectedProjectId]);
@@ -199,14 +211,19 @@ export default function App() {
     if (selectedProject && scrollAreaRef.current) {
       const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
       if (viewport) {
+        // Use a slightly longer timeout to ensure content is rendered
         setTimeout(() => {
-          viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+          viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' });
           // Focus the last block
           const lastBlock = selectedProject.blocks[selectedProject.blocks.length - 1];
           if (lastBlock) {
-            setFocusBlockId(lastBlock.id);
+            // Reset focus first to ensure the effect triggers
+            setFocusBlockId(null);
+            setTimeout(() => {
+              setFocusBlockId(lastBlock.id);
+            }, 10);
           }
-        }, 100);
+        }, 50);
       }
     }
   }, [selectedProjectId]);
@@ -471,7 +488,7 @@ export default function App() {
         </motion.aside>
 
         {/* Main Content */}
-        <main className="flex-1 flex flex-col min-w-0 bg-background relative">
+        <main className="flex-1 flex flex-col min-w-0 bg-background relative overflow-hidden">
           {!isSidebarOpen && (
             <div className="absolute left-4 top-4 z-30">
               <Button 
