@@ -31,7 +31,8 @@ import {
   CheckSquare,
   Square,
   Keyboard,
-  X
+  X,
+  Scissors
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/ui/button';
@@ -437,6 +438,17 @@ export default function App() {
     setFocusBlockId(newBlock.id);
   };
 
+  const splitBlock = (projectId: string, index: number, content: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+
+    const newBlock: Block = { id: crypto.randomUUID(), content };
+    const newBlocks = [...project.blocks];
+    newBlocks.splice(index + 1, 0, newBlock);
+    updateProjectBlocks(projectId, newBlocks);
+    setFocusBlockId(newBlock.id);
+  };
+
   const deleteBlock = (projectId: string, blockId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project || project.blocks.length <= 1) return;
@@ -768,6 +780,7 @@ export default function App() {
                         onDelete={() => deleteBlock(selectedProject.id, block.id)}
                         onToggleDone={() => toggleBlockDone(selectedProject.id, block.id)}
                         onAddBelow={() => addBlock(selectedProject.id, index)}
+                        onSplitBlock={(content) => splitBlock(selectedProject.id, index, content)}
                         onDeleteIfEmpty={() => {
                           if (selectedProject.blocks.length > 1) {
                             const prevBlock = selectedProject.blocks[index - 1];
@@ -901,11 +914,13 @@ interface BlockItemProps {
   onAddBelow: () => void;
   onDeleteIfEmpty: () => void;
   onToggleDone: () => void;
+  onSplitBlock: (content: string) => void;
   canDelete: boolean;
 }
 
-function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, onDeleteIfEmpty, onToggleDone, canDelete }: BlockItemProps) {
+function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, onDeleteIfEmpty, onToggleDone, onSplitBlock, canDelete }: BlockItemProps) {
   const [isCopied, setIsCopied] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -920,6 +935,28 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
     navigator.clipboard.writeText(block.content);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const handleMoveToNewBlock = () => {
+    if (!textareaRef.current) return;
+    const { selectionStart, selectionEnd } = textareaRef.current;
+    if (selectionStart === selectionEnd) return;
+
+    const selectedText = block.content.substring(selectionStart, selectionEnd);
+    
+    if (!block.isDone) {
+      const newContent = block.content.substring(0, selectionStart) + block.content.substring(selectionEnd);
+      onUpdate(newContent);
+    }
+    
+    onSplitBlock(selectedText);
+    setHasSelection(false);
+  };
+
+  const checkSelection = () => {
+    if (textareaRef.current) {
+      setHasSelection(textareaRef.current.selectionStart !== textareaRef.current.selectionEnd);
+    }
   };
 
   const handleKeyDown = (e: any) => {
@@ -1109,6 +1146,21 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
             </TooltipTrigger>
             <TooltipContent>Outdent</TooltipContent>
           </Tooltip>
+          <Separator orientation="vertical" className="h-4 mx-1" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className={cn("h-7 w-7", hasSelection ? "text-accent" : "text-muted-foreground/30")} 
+                onClick={handleMoveToNewBlock} 
+                disabled={!hasSelection}
+              >
+                <Scissors size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Move selection to new block</TooltipContent>
+          </Tooltip>
         </div>
 
         <div className="flex items-center gap-1">
@@ -1151,7 +1203,13 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
         ref={textareaRef}
         value={block.content}
         onFocus={onFocus}
-        onChange={(e) => onUpdate(e.target.value)}
+        onSelect={checkSelection}
+        onMouseUp={checkSelection}
+        onKeyUp={checkSelection}
+        onChange={(e) => {
+          onUpdate(e.target.value);
+          checkSelection();
+        }}
         onKeyDown={handleKeyDown}
         readOnly={block.isDone}
         placeholder={block.isDone ? "This block is marked as done." : "Begin writing your protocol..."}
