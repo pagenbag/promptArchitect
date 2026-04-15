@@ -19,6 +19,7 @@ import {
   MoreVertical, 
   Search, 
   Settings, 
+  Sparkles,
   PanelLeftClose, 
   PanelLeftOpen, 
   Check, 
@@ -139,6 +140,12 @@ export default function App() {
   const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
   const [isShortcutsDialogOpen, setIsShortcutsDialogOpen] = useState(false);
   
+  // History for Undo/Redo
+  const [history, setHistory] = useState<Project[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isUndoRedoAction = useRef(false);
+  const lastSavedProjects = useRef<string>('');
+  
   // Content Search States
   const [contentSearchQuery, setContentSearchQuery] = useState('');
   const [searchMatches, setSearchMatches] = useState<{ blockId: string, start: number, end: number }[]>([]);
@@ -153,6 +160,27 @@ export default function App() {
   const [targetParentId, setTargetParentId] = useState<string | null>(null);
 
   const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), []);
+
+  // History Management
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      const prevProjects = history[historyIndex - 1];
+      isUndoRedoAction.current = true;
+      setProjects(prevProjects);
+      setHistoryIndex(historyIndex - 1);
+      lastSavedProjects.current = JSON.stringify(prevProjects);
+    }
+  }, [history, historyIndex]);
+
+  const redo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const nextProjects = history[historyIndex + 1];
+      isUndoRedoAction.current = true;
+      setProjects(nextProjects);
+      setHistoryIndex(historyIndex + 1);
+      lastSavedProjects.current = JSON.stringify(nextProjects);
+    }
+  }, [history, historyIndex]);
 
   // Load data from localStorage
   useEffect(() => {
@@ -247,11 +275,25 @@ export default function App() {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
+
+      // Undo: Ctrl+Z
+      if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+        // Only trigger global undo if not in a textarea or if we want to override
+        // For now, let's allow it to be global
+        e.preventDefault();
+        undo();
+      }
+
+      // Redo: Ctrl+Y or Ctrl+Shift+Z
+      if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'Z')) {
+        e.preventDefault();
+        redo();
+      }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [openProjectIds, selectedProjectId]);
+  }, [openProjectIds, selectedProjectId, undo, redo]);
 
   // Theme effect
   useEffect(() => {
@@ -269,6 +311,32 @@ export default function App() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
     }
   }, [projects]);
+
+  // History Management Effect
+  useEffect(() => {
+    if (projects.length === 0) return;
+    
+    if (isUndoRedoAction.current) {
+      isUndoRedoAction.current = false;
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const currentStr = JSON.stringify(projects);
+      if (currentStr !== lastSavedProjects.current) {
+        setHistory(prev => {
+          const newHistory = prev.slice(0, historyIndex + 1);
+          const updatedHistory = [...newHistory, projects];
+          if (updatedHistory.length > 50) return updatedHistory.slice(1);
+          return updatedHistory;
+        });
+        setHistoryIndex(prev => Math.min(prev + 1, 49));
+        lastSavedProjects.current = currentStr;
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [projects, historyIndex]);
 
   // Save last selected project
   useEffect(() => {
@@ -353,7 +421,7 @@ export default function App() {
   // Scroll to bottom when project changes
   useEffect(() => {
     if (selectedProject && scrollAreaRef.current) {
-      const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      const viewport = scrollAreaRef.current.querySelector('[data-slot="scroll-area-viewport"]');
       if (viewport) {
         // Use a slightly longer timeout to ensure content is rendered
         setTimeout(() => {
@@ -540,7 +608,7 @@ export default function App() {
     try {
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `Generate a very short (2-4 words) description of the following content. Examples: "Add search bar", "Fix auto indentation", "Update styles". Content: ${block.content}`,
+        contents: `Generate a short (2-8 words) description of the following content. Examples: "Add search bar", "Fix auto indentation", "Update styles". Content: ${block.content}`,
       });
       
       const description = response.text?.trim().replace(/^["']|["']$/g, '');
@@ -572,7 +640,7 @@ export default function App() {
     try {
       const response = await ai.models.generateContent({
         model: "gemini-3.1-pro-preview",
-        contents: `Expand the following text into clear, concise, and structured instructions that an AI agent can use to build the described feature or perform the actions. Use markdown if appropriate. Text: ${textToExpand}`,
+        contents: `Expand the following text into clear, concise, and structured instructions that an AI agent can use to build the described feature or perform the actions. Use markdown if appropriate. IMPORTANT: Do not include any introductory or filler text (e.g., "Here is a structured set of instructions..."). Start directly with the instructions. Text: ${textToExpand}`,
       });
 
       const expandedText = response.text?.trim();
@@ -762,44 +830,12 @@ export default function App() {
 
         {/* Main Content */}
         <main className="flex-1 flex flex-col min-w-0 bg-background relative overflow-hidden">
-          {/* Tab Bar */}
-          {openProjectIds.length > 0 && (
-            <div className="flex items-center bg-muted/30 border-b border-border h-10 px-4 gap-1 overflow-x-auto no-scrollbar shrink-0">
-              {openProjectIds.map((id, index) => {
-                const project = projects.find(p => p.id === id);
-                if (!project) return null;
-                const isActive = selectedProjectId === id;
-                return (
-                  <div 
-                    key={id}
-                    className={cn(
-                      "flex items-center h-8 px-3 gap-2 rounded-t-md cursor-pointer transition-all duration-200 min-w-[120px] max-w-[200px] group",
-                      isActive 
-                        ? "bg-background border-x border-t border-border text-foreground font-medium" 
-                        : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
-                    )}
-                    onClick={() => setSelectedProjectId(id)}
-                  >
-                    <FileText size={14} className={cn(isActive ? "text-accent" : "text-muted-foreground/50")} />
-                    <span className="text-xs truncate flex-1">{project.name}</span>
-                    <button 
-                      className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-muted rounded-sm transition-all"
-                      onClick={(e) => handleCloseTab(id, e)}
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
           {!isSidebarOpen && (
-            <div className="absolute left-4 top-4 z-30">
+            <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col items-center py-4 border-r border-border bg-muted/10 z-30">
               <Button 
-                variant="outline" 
+                variant="ghost" 
                 size="icon" 
-                className="bg-background/80 backdrop-blur-sm border-border hover:border-accent text-muted-foreground hover:text-accent"
+                className="text-muted-foreground hover:text-accent"
                 onClick={() => setIsSidebarOpen(true)}
               >
                 <PanelLeftOpen size={18} />
@@ -807,9 +843,42 @@ export default function App() {
             </div>
           )}
 
-          {selectedProject ? (
+          <div className={cn("flex-1 flex flex-col min-w-0", !isSidebarOpen && "pl-12")}>
+            {/* Tab Bar */}
+            {openProjectIds.length > 0 && (
+              <div className="flex items-center bg-muted/30 border-b border-border h-10 px-4 gap-1 overflow-x-auto no-scrollbar shrink-0">
+                {openProjectIds.map((id, index) => {
+                  const project = projects.find(p => p.id === id);
+                  if (!project) return null;
+                  const isActive = selectedProjectId === id;
+                  return (
+                    <div 
+                      key={id}
+                      className={cn(
+                        "flex items-center h-8 px-3 gap-2 rounded-t-md cursor-pointer transition-all duration-200 min-w-[120px] max-w-[200px] group",
+                        isActive 
+                          ? "bg-background border-x border-t border-border text-foreground font-medium" 
+                          : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                      )}
+                      onClick={() => setSelectedProjectId(id)}
+                    >
+                      <FileText size={14} className={cn(isActive ? "text-accent" : "text-muted-foreground/50")} />
+                      <span className="text-xs truncate flex-1">{project.name}</span>
+                      <button 
+                        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-muted rounded-sm transition-all"
+                        onClick={(e) => handleCloseTab(id, e)}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedProject ? (
             <>
-              <header className="py-10 px-12 border-b border-border flex items-center justify-between bg-background/50 backdrop-blur-md z-20">
+              <header className="py-10 px-12 border-b border-border flex items-center justify-between bg-background/50 backdrop-blur-md z-20 shrink-0">
                 <div className="flex flex-col gap-2 overflow-hidden flex-1 mr-8">
                   <div className="flex items-center flex-wrap gap-2 text-muted-foreground text-[10px] uppercase tracking-[2px] font-bold">
                     <span className="hover:text-foreground cursor-pointer transition-colors" onClick={() => setSelectedProjectId(null)}>Projects</span>
@@ -928,10 +997,9 @@ export default function App() {
                 </div>
               </header>
 
-              <div className="flex-1 min-h-0">
-                <ScrollArea className="h-full" ref={scrollAreaRef}>
-                  <div className="max-w-5xl mx-auto py-16 px-12 space-y-6">
-                  {selectedProject.blocks.map((block, index) => (
+              <ScrollArea className="flex-1 min-h-0" ref={scrollAreaRef}>
+                <div className="max-w-5xl mx-auto py-16 px-12 space-y-6">
+                {selectedProject.blocks.map((block, index) => (
                     <div key={block.id} className="group relative">
                       {/* Insertion Point Above (only for first block) */}
                       {index === 0 && (
@@ -1001,9 +1069,8 @@ export default function App() {
                   <div className="h-32" /> {/* Spacer */}
                 </div>
               </ScrollArea>
-            </div>
 
-              <footer className="h-10 border-t border-border bg-muted/30 px-12 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground font-medium">
+              <footer className="h-10 border-t border-border bg-muted/30 px-12 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground font-medium shrink-0">
                 <div className="flex items-center gap-4">
                   <span>{selectedProject.blocks.length} Blocks</span>
                   <Separator orientation="vertical" className="h-3 bg-border" />
@@ -1031,7 +1098,8 @@ export default function App() {
               </Button>
             </div>
           )}
-        </main>
+        </div>
+      </main>
 
         {/* Keyboard Shortcuts Dialog */}
         <Dialog open={isShortcutsDialogOpen} onOpenChange={setIsShortcutsDialogOpen}>
@@ -1048,6 +1116,8 @@ export default function App() {
                   <ShortcutItem keys={["Alt", "1-9"]} label="Switch to Tab 1-9" />
                   <ShortcutItem keys={["Ctrl", "F"]} label="Search Blocks" />
                   <ShortcutItem keys={["Ctrl", "W"]} label="Close Current Tab" />
+                  <ShortcutItem keys={["Ctrl", "Z"]} label="Undo" />
+                  <ShortcutItem keys={["Ctrl", "Y"]} label="Redo" />
                 </div>
               </div>
               <div className="space-y-4">
@@ -1169,10 +1239,11 @@ function BlockItem({
     if (!block.isDone) {
       const newContent = block.content.substring(0, selectionStart) + block.content.substring(selectionEnd);
       onUpdate(newContent);
+      // Reset selection state after cutting
+      setHasSelection(false);
     }
     
     onSplitBlock(selectedText);
-    setHasSelection(false);
   };
 
   const checkSelection = () => {
@@ -1236,11 +1307,11 @@ function BlockItem({
     }
   };
 
-  const sharedStyles = "w-full min-h-[140px] p-8 pt-14 text-lg font-serif whitespace-pre-wrap break-words border-none ring-0 outline-none transition-none resize-none overflow-hidden";
+  const sharedStyles = "w-full min-h-[140px] p-8 pt-14 text-base font-serif whitespace-pre-wrap break-words border-none ring-0 outline-none transition-none resize-none overflow-hidden block";
 
   const sharedInlineStyles: React.CSSProperties = {
-    fontSize: '1.125rem', // text-lg
-    lineHeight: '1.75rem', // leading-relaxed
+    fontSize: '1rem', // text-base
+    lineHeight: '1.6rem', // adjusted for smaller font
     fontVariantLigatures: 'none',
     fontFeatureSettings: '"liga" 0',
     wordBreak: 'break-word',
@@ -1425,7 +1496,7 @@ function BlockItem({
             ) : (
               <>
                 <FileText size={10} className="text-muted-foreground" />
-                <span className="text-[10px] font-medium text-muted-foreground italic">{block.description}</span>
+                <span className="text-[12px] font-medium text-muted-foreground italic">{block.description}</span>
               </>
             )}
           </div>
@@ -1452,10 +1523,10 @@ function BlockItem({
                 disabled={block.isThinking || block.isDone}
               >
                 <motion.div
-                  animate={block.isThinking ? { rotate: 360 } : {}}
-                  transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+                  animate={block.isThinking ? { rotate: 360 } : { rotate: 0 }}
+                  transition={block.isThinking ? { repeat: Infinity, duration: 2, ease: "linear" } : { duration: 0.5 }}
                 >
-                  <Settings size={14} />
+                  <Sparkles size={14} />
                 </motion.div>
               </Button>
             </TooltipTrigger>
@@ -1508,7 +1579,7 @@ function BlockItem({
                 <Scissors size={14} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Move selection to new block</TooltipContent>
+            <TooltipContent>{block.isDone ? "Copy selection to new block" : "Move selection to new block"}</TooltipContent>
           </Tooltip>
         </div>
 
