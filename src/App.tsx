@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as React from 'react';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   FolderPlus, 
@@ -1045,23 +1046,36 @@ function BlockItem({
   const [isCopied, setIsCopied] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const prevIsFocused = useRef(isFocused);
+  const prevActiveMatchIndex = useRef(activeMatchIndex);
 
   useEffect(() => {
     if (isFocused && textareaRef.current) {
-      textareaRef.current.focus();
-      // If we have an active match, select it
-      if (activeMatchIndex !== null && searchMatches[activeMatchIndex]) {
-        const match = searchMatches[activeMatchIndex];
-        textareaRef.current.setSelectionRange(match.start, match.end);
-        
-        // Scroll into view if needed
-        textareaRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } else {
-        // Default focus behavior: end of text
-        const length = textareaRef.current.value.length;
-        textareaRef.current.setSelectionRange(length, length);
+      const becameFocused = !prevIsFocused.current && isFocused;
+      const matchChanged = activeMatchIndex !== null && prevActiveMatchIndex.current !== activeMatchIndex;
+
+      if (becameFocused || matchChanged) {
+        // Only focus if we are navigating search or just clicked the block
+        // This prevents stealing focus from the search bar while typing
+        if (matchChanged) {
+          textareaRef.current.focus();
+        }
+
+        if (activeMatchIndex !== null && searchMatches[activeMatchIndex]) {
+          const match = searchMatches[activeMatchIndex];
+          // Only set selection if it's not already there to avoid cursor resets
+          if (textareaRef.current.selectionStart !== match.start || textareaRef.current.selectionEnd !== match.end) {
+            textareaRef.current.setSelectionRange(match.start, match.end);
+            textareaRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        } else if (becameFocused) {
+          const length = textareaRef.current.value.length;
+          textareaRef.current.setSelectionRange(length, length);
+        }
       }
     }
+    prevIsFocused.current = isFocused;
+    prevActiveMatchIndex.current = activeMatchIndex;
   }, [isFocused, activeMatchIndex, searchMatches]);
 
   const handleCopy = () => {
@@ -1114,6 +1128,12 @@ function BlockItem({
             "rounded-sm px-0.5 transition-colors duration-200",
             isActive ? "bg-accent text-background" : "bg-accent/30 text-foreground"
           )}
+          style={{ 
+            fontFamily: 'inherit', 
+            fontSize: 'inherit', 
+            lineHeight: 'inherit',
+            padding: '0' // Reset padding to avoid width shifts
+          }}
         >
           {block.content.substring(match.start, match.end)}
         </mark>
@@ -1125,6 +1145,17 @@ function BlockItem({
     // Remaining text
     result.push(block.content.substring(lastIndex));
     return result;
+  };
+
+  const sharedStyles = "w-full min-h-[140px] p-8 pt-14 text-lg font-serif whitespace-pre-wrap break-words border-none ring-0 outline-none transition-none";
+
+  const sharedInlineStyles: React.CSSProperties = {
+    lineHeight: '1.625',
+    fontVariantLigatures: 'none',
+    fontFeatureSettings: '"liga" 0',
+    wordBreak: 'break-word',
+    letterSpacing: 'normal',
+    tabSize: '2'
   };
 
   const handleKeyDown = (e: any) => {
@@ -1375,13 +1406,15 @@ function BlockItem({
         </div>
       </div>
 
-      <div className="relative">
+      <div className="grid grid-cols-1 grid-rows-1 relative">
         {/* Highlight Layer */}
         <div 
           className={cn(
-            "absolute inset-0 pointer-events-none whitespace-pre-wrap break-words p-8 pt-14 text-lg leading-relaxed font-serif text-transparent",
+            "col-start-1 row-start-1 pointer-events-none text-transparent select-none",
+            sharedStyles,
             block.isDone && "grayscale-[0.5]"
           )}
+          style={sharedInlineStyles}
           aria-hidden="true"
         >
           {renderHighlights()}
@@ -1402,9 +1435,11 @@ function BlockItem({
           readOnly={block.isDone}
           placeholder={block.isDone ? "This block is marked as done." : "Begin writing your protocol..."}
           className={cn(
-            "min-h-[140px] border-none focus-visible:ring-0 resize-none p-8 pt-14 text-lg leading-relaxed bg-transparent font-serif text-foreground/90 placeholder:text-muted-foreground/30 transition-all",
+            "col-start-1 row-start-1 bg-transparent text-foreground/90 placeholder:text-muted-foreground/30",
+            sharedStyles,
             block.isDone && "cursor-not-allowed text-muted-foreground"
           )}
+          style={sharedInlineStyles}
         />
       </div>
     </div>
