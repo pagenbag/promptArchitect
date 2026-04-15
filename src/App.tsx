@@ -465,17 +465,19 @@ export default function App() {
             </div>
           </div>
 
-          <ScrollArea className="flex-1 px-3">
-            <div className="space-y-1">
-              <div className="flex items-center justify-between px-3 mb-2">
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[2px]">Projects</span>
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-accent" onClick={() => handleAddFolder(null)}>
-                  <PlusCircle size={14} />
-                </Button>
+          <div className="flex-1 min-h-0 px-3">
+            <ScrollArea className="h-full">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between px-3 mb-2">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-[2px]">Projects</span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-accent" onClick={() => handleAddFolder(null)}>
+                    <PlusCircle size={14} />
+                  </Button>
+                </div>
+                {renderTree(null)}
               </div>
-              {renderTree(null)}
-            </div>
-          </ScrollArea>
+            </ScrollArea>
+          </div>
 
           <div className="p-4 border-t border-border flex items-center justify-between">
             <Button variant="ghost" size="icon" onClick={toggleTheme} className="text-muted-foreground hover:text-accent">
@@ -504,7 +506,7 @@ export default function App() {
 
           {selectedProject ? (
             <>
-              <header className="py-10 px-12 border-b border-border flex items-center justify-between bg-background/50 backdrop-blur-md sticky top-0 z-20">
+              <header className="py-10 px-12 border-b border-border flex items-center justify-between bg-background/50 backdrop-blur-md z-20">
                 <div className="flex flex-col gap-2 overflow-hidden flex-1 mr-8">
                   <div className="flex items-center flex-wrap gap-2 text-muted-foreground text-[10px] uppercase tracking-[2px] font-bold">
                     <span className="hover:text-foreground cursor-pointer transition-colors" onClick={() => setSelectedProjectId(null)}>Projects</span>
@@ -576,8 +578,9 @@ export default function App() {
                 </div>
               </header>
 
-              <ScrollArea className="flex-1" ref={scrollAreaRef}>
-                <div className="max-w-5xl mx-auto py-16 px-12 space-y-6">
+              <div className="flex-1 min-h-0">
+                <ScrollArea className="h-full" ref={scrollAreaRef}>
+                  <div className="max-w-5xl mx-auto py-16 px-12 space-y-6">
                   {selectedProject.blocks.map((block, index) => (
                     <div key={block.id} className="group relative">
                       {/* Insertion Point Above (only for first block) */}
@@ -636,6 +639,7 @@ export default function App() {
                   <div className="h-32" /> {/* Spacer */}
                 </div>
               </ScrollArea>
+            </div>
 
               <footer className="h-10 border-t border-border bg-muted/30 px-12 flex items-center justify-between text-[10px] uppercase tracking-widest text-muted-foreground font-medium">
                 <div className="flex items-center gap-4">
