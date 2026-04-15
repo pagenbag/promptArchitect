@@ -8,7 +8,8 @@ import {
   FolderPlus, 
   Plus, 
   ChevronRight, 
-  ChevronDown, 
+  ChevronDown,
+  ChevronUp,
   Folder, 
   FileText, 
   Copy, 
@@ -136,8 +137,14 @@ export default function App() {
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
   const [isShortcutsDialogOpen, setIsShortcutsDialogOpen] = useState(false);
+  
+  // Content Search States
+  const [contentSearchQuery, setContentSearchQuery] = useState('');
+  const [searchMatches, setSearchMatches] = useState<{ blockId: string, start: number, end: number }[]>([]);
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Dialog states
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
@@ -231,6 +238,12 @@ export default function App() {
           handleCloseTab(selectedProjectId);
         }
       }
+
+      // Search: Ctrl+F
+      if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
@@ -285,6 +298,54 @@ export default function App() {
     }
     return path;
   }, [projects, selectedProjectId]);
+
+  // Content Search Logic
+  useEffect(() => {
+    if (!contentSearchQuery || !selectedProject) {
+      setSearchMatches([]);
+      setCurrentMatchIndex(-1);
+      return;
+    }
+
+    const matches: { blockId: string, start: number, end: number }[] = [];
+    const query = contentSearchQuery.toLowerCase();
+
+    selectedProject.blocks.forEach(block => {
+      const content = block.content.toLowerCase();
+      let pos = content.indexOf(query);
+      while (pos !== -1) {
+        matches.push({
+          blockId: block.id,
+          start: pos,
+          end: pos + query.length
+        });
+        pos = content.indexOf(query, pos + 1);
+      }
+    });
+
+    setSearchMatches(matches);
+    setCurrentMatchIndex(matches.length > 0 ? 0 : -1);
+  }, [contentSearchQuery, selectedProject]);
+
+  const navigateSearch = (direction: 'next' | 'prev') => {
+    if (searchMatches.length === 0) return;
+
+    let nextIndex;
+    if (direction === 'next') {
+      nextIndex = (currentMatchIndex + 1) % searchMatches.length;
+    } else {
+      nextIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+    }
+
+    setCurrentMatchIndex(nextIndex);
+    const match = searchMatches[nextIndex];
+    
+    // Focus and scroll to block
+    setFocusBlockId(match.blockId);
+    
+    // We need to wait for the block to be focused and then select the text
+    // This will be handled by an effect in BlockItem or by passing props
+  };
 
   // Scroll to bottom when project changes
   useEffect(() => {
@@ -732,6 +793,53 @@ export default function App() {
                   )}
                 </div>
                 <div className="flex items-center gap-4 shrink-0">
+                  {/* Content Search Bar */}
+                  <div className="relative flex items-center">
+                    <div className={cn(
+                      "flex items-center bg-muted/50 border border-border rounded-full px-3 py-1 transition-all duration-300",
+                      contentSearchQuery ? "w-64 border-accent/50 ring-1 ring-accent/10" : "w-48"
+                    )}>
+                      <Search size={14} className="text-muted-foreground mr-2" />
+                      <input 
+                        ref={searchInputRef}
+                        type="text"
+                        placeholder="Search blocks..."
+                        value={contentSearchQuery}
+                        onChange={(e) => setContentSearchQuery(e.target.value)}
+                        className="bg-transparent border-none focus:ring-0 text-xs w-full placeholder:text-muted-foreground/50"
+                      />
+                      {contentSearchQuery && (
+                        <div className="flex items-center gap-1 ml-2 border-l border-border pl-2">
+                          <span className="text-[10px] font-mono text-muted-foreground whitespace-nowrap">
+                            {searchMatches.length > 0 ? `${currentMatchIndex + 1}/${searchMatches.length}` : '0/0'}
+                          </span>
+                          <div className="flex flex-col -space-y-1">
+                            <button 
+                              onClick={() => navigateSearch('prev')}
+                              className="p-0.5 hover:text-accent transition-colors"
+                              disabled={searchMatches.length === 0}
+                            >
+                              <ChevronUp size={12} />
+                            </button>
+                            <button 
+                              onClick={() => navigateSearch('next')}
+                              className="p-0.5 hover:text-accent transition-colors"
+                              disabled={searchMatches.length === 0}
+                            >
+                              <ChevronDown size={12} />
+                            </button>
+                          </div>
+                          <button 
+                            onClick={() => setContentSearchQuery('')}
+                            className="ml-1 p-0.5 hover:text-destructive transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="flex flex-col items-end gap-1">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Auto-save active</span>
                     <span className="text-[10px] text-muted-foreground/50">Last updated: {new Date(selectedProject.updatedAt).toLocaleTimeString()}</span>
@@ -791,6 +899,15 @@ export default function App() {
                           }
                         }}
                         canDelete={selectedProject.blocks.length > 1}
+                        searchMatches={searchMatches.filter(m => m.blockId === block.id)}
+                        activeMatchIndex={
+                          currentMatchIndex !== -1 && searchMatches[currentMatchIndex]?.blockId === block.id
+                            ? searchMatches.filter(m => m.blockId === block.id).findIndex(m => 
+                                m.start === searchMatches[currentMatchIndex].start && 
+                                m.end === searchMatches[currentMatchIndex].end
+                              )
+                            : null
+                        }
                       />
 
                       {/* Insertion Point Below */}
@@ -856,6 +973,7 @@ export default function App() {
                   <ShortcutItem keys={["Alt", "→"]} label="Next Tab" />
                   <ShortcutItem keys={["Alt", "←"]} label="Previous Tab" />
                   <ShortcutItem keys={["Alt", "1-9"]} label="Switch to Tab 1-9" />
+                  <ShortcutItem keys={["Ctrl", "F"]} label="Search Blocks" />
                   <ShortcutItem keys={["Ctrl", "W"]} label="Close Current Tab" />
                 </div>
               </div>
@@ -916,9 +1034,14 @@ interface BlockItemProps {
   onToggleDone: () => void;
   onSplitBlock: (content: string) => void;
   canDelete: boolean;
+  searchMatches: { start: number, end: number }[];
+  activeMatchIndex: number | null;
 }
 
-function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, onDeleteIfEmpty, onToggleDone, onSplitBlock, canDelete }: BlockItemProps) {
+function BlockItem({ 
+  block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, onDeleteIfEmpty, onToggleDone, onSplitBlock, canDelete,
+  searchMatches, activeMatchIndex
+}: BlockItemProps) {
   const [isCopied, setIsCopied] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -926,10 +1049,20 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
   useEffect(() => {
     if (isFocused && textareaRef.current) {
       textareaRef.current.focus();
-      const length = textareaRef.current.value.length;
-      textareaRef.current.setSelectionRange(length, length);
+      // If we have an active match, select it
+      if (activeMatchIndex !== null && searchMatches[activeMatchIndex]) {
+        const match = searchMatches[activeMatchIndex];
+        textareaRef.current.setSelectionRange(match.start, match.end);
+        
+        // Scroll into view if needed
+        textareaRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        // Default focus behavior: end of text
+        const length = textareaRef.current.value.length;
+        textareaRef.current.setSelectionRange(length, length);
+      }
     }
-  }, [isFocused]);
+  }, [isFocused, activeMatchIndex, searchMatches]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(block.content);
@@ -957,6 +1090,41 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
     if (textareaRef.current) {
       setHasSelection(textareaRef.current.selectionStart !== textareaRef.current.selectionEnd);
     }
+  };
+
+  const renderHighlights = () => {
+    if (searchMatches.length === 0) return block.content;
+
+    const result = [];
+    let lastIndex = 0;
+
+    // Sort matches by start position
+    const sortedMatches = [...searchMatches].sort((a, b) => a.start - b.start);
+
+    sortedMatches.forEach((match, idx) => {
+      // Text before match
+      result.push(block.content.substring(lastIndex, match.start));
+      
+      // The match itself
+      const isActive = idx === activeMatchIndex;
+      result.push(
+        <mark 
+          key={idx} 
+          className={cn(
+            "rounded-sm px-0.5 transition-colors duration-200",
+            isActive ? "bg-accent text-background" : "bg-accent/30 text-foreground"
+          )}
+        >
+          {block.content.substring(match.start, match.end)}
+        </mark>
+      );
+      
+      lastIndex = match.end;
+    });
+
+    // Remaining text
+    result.push(block.content.substring(lastIndex));
+    return result;
   };
 
   const handleKeyDown = (e: any) => {
@@ -1093,7 +1261,15 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
       if (textareaRef.current) {
         textareaRef.current.focus();
         const diff = finalContent.length - text.length;
-        textareaRef.current.setSelectionRange(start, Math.max(start, end + diff));
+        
+        if (start === end) {
+          // If no selection, just move the cursor
+          const newPos = Math.max(0, start + diff);
+          textareaRef.current.setSelectionRange(newPos, newPos);
+        } else {
+          // If there was a selection, maintain it
+          textareaRef.current.setSelectionRange(start, Math.max(start, end + diff));
+        }
       }
     }, 0);
   };
@@ -1199,25 +1375,38 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
         </div>
       </div>
 
-      <Textarea
-        ref={textareaRef}
-        value={block.content}
-        onFocus={onFocus}
-        onSelect={checkSelection}
-        onMouseUp={checkSelection}
-        onKeyUp={checkSelection}
-        onChange={(e) => {
-          onUpdate(e.target.value);
-          checkSelection();
-        }}
-        onKeyDown={handleKeyDown}
-        readOnly={block.isDone}
-        placeholder={block.isDone ? "This block is marked as done." : "Begin writing your protocol..."}
-        className={cn(
-          "min-h-[140px] border-none focus-visible:ring-0 resize-none p-8 pt-14 text-lg leading-relaxed bg-transparent font-serif text-foreground/90 placeholder:text-muted-foreground/30 transition-all",
-          block.isDone && "cursor-not-allowed text-muted-foreground"
-        )}
-      />
+      <div className="relative">
+        {/* Highlight Layer */}
+        <div 
+          className={cn(
+            "absolute inset-0 pointer-events-none whitespace-pre-wrap break-words p-8 pt-14 text-lg leading-relaxed font-serif text-transparent",
+            block.isDone && "grayscale-[0.5]"
+          )}
+          aria-hidden="true"
+        >
+          {renderHighlights()}
+        </div>
+
+        <Textarea
+          ref={textareaRef}
+          value={block.content}
+          onFocus={onFocus}
+          onSelect={checkSelection}
+          onMouseUp={checkSelection}
+          onKeyUp={checkSelection}
+          onChange={(e) => {
+            onUpdate(e.target.value);
+            checkSelection();
+          }}
+          onKeyDown={handleKeyDown}
+          readOnly={block.isDone}
+          placeholder={block.isDone ? "This block is marked as done." : "Begin writing your protocol..."}
+          className={cn(
+            "min-h-[140px] border-none focus-visible:ring-0 resize-none p-8 pt-14 text-lg leading-relaxed bg-transparent font-serif text-foreground/90 placeholder:text-muted-foreground/30 transition-all",
+            block.isDone && "cursor-not-allowed text-muted-foreground"
+          )}
+        />
+      </div>
     </div>
   );
 }
