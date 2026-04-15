@@ -1,0 +1,6 @@
+{
+  "name": "Prompt Architect",
+  "description": "A structured manager for AI agent instructions with folder-based organization and block-level editing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
