@@ -58,6 +58,50 @@ import { cn } from '@/lib/utils';
 const STORAGE_KEY = 'prompt_architect_data';
 const THEME_KEY = 'prompt_architect_theme';
 
+function renumberHierarchical(text: string): string {
+  const lines = text.split('\n');
+  const counters: number[] = [];
+  let inList = false;
+
+  return lines.map(line => {
+    const trimmed = line.trim();
+    if (trimmed === '') {
+      inList = false;
+      counters.length = 0;
+      return line;
+    }
+    
+    const indentMatch = line.match(/^(  )*/);
+    const indentLevel = indentMatch ? indentMatch[0].length / 2 : 0;
+    const startsWithNumber = /^\s*\d+(\.\d+)*\. /.test(line);
+    
+    if (startsWithNumber || indentLevel > 0) {
+      inList = true;
+    } else {
+      inList = false;
+    }
+
+    if (!inList) {
+      counters.length = 0;
+      return line;
+    }
+    
+    if (counters.length > indentLevel + 1) {
+      counters.splice(indentLevel + 1);
+    }
+    
+    for (let i = 0; i <= indentLevel; i++) {
+      if (counters[i] === undefined) counters[i] = 1;
+    }
+    
+    const numberStr = counters.slice(0, indentLevel + 1).join('.') + '.';
+    counters[indentLevel]++;
+    
+    const cleanContent = line.replace(/^(  )*(\d+(\.\d+)*\.)?/, '').trim();
+    return '  '.repeat(indentLevel) + numberStr + ' ' + cleanContent;
+  }).join('\n');
+}
+
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -675,6 +719,22 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
       e.preventDefault();
       onDeleteIfEmpty();
     }
+    
+    // Tab support
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      applyTextAction(e.shiftKey ? 'outdent' : 'indent');
+    }
+    
+    // Ctrl + Arrows
+    if (e.ctrlKey && e.key === 'ArrowRight') {
+      e.preventDefault();
+      applyTextAction('indent');
+    }
+    if (e.ctrlKey && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      applyTextAction('outdent');
+    }
   };
 
   const applyTextAction = (action: 'bullet' | 'number' | 'indent' | 'outdent') => {
@@ -683,36 +743,42 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
     const start = textareaRef.current.selectionStart;
     const end = textareaRef.current.selectionEnd;
     const text = block.content;
-    const lines = text.substring(start, end).split('\n');
     
-    let result = '';
+    // Find start of first line and end of last line in selection
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    const lineEnd = text.indexOf('\n', end);
+    const actualEnd = lineEnd === -1 ? text.length : lineEnd;
     
-    switch (action) {
-      case 'bullet':
-        result = lines.map(line => line.startsWith('- ') ? line.substring(2) : `- ${line}`).join('\n');
-        break;
-      case 'number':
-        result = lines.map((line, i) => {
-          const match = line.match(/^\d+\. /);
-          return match ? line.substring(match[0].length) : `${i + 1}. ${line}`;
-        }).join('\n');
-        break;
-      case 'indent':
-        result = lines.map(line => `  ${line}`).join('\n');
-        break;
-      case 'outdent':
-        result = lines.map(line => line.startsWith('  ') ? line.substring(2) : line).join('\n');
-        break;
+    const selectedText = text.substring(lineStart, actualEnd);
+    const lines = selectedText.split('\n');
+    
+    let resultLines = [...lines];
+    
+    if (action === 'indent') {
+      resultLines = lines.map(line => '  ' + line);
+    } else if (action === 'outdent') {
+      resultLines = lines.map(line => line.startsWith('  ') ? line.substring(2) : line);
+    } else if (action === 'bullet') {
+      resultLines = lines.map(line => line.trim().startsWith('- ') ? line.replace('- ', '') : '- ' + line.trim());
+    } else if (action === 'number') {
+      const isNumbered = lines.some(l => /^\s*\d+(\.\d+)*\. /.test(l));
+      if (isNumbered) {
+        resultLines = lines.map(l => l.replace(/^\s*\d+(\.\d+)*\. /, ''));
+      } else {
+        resultLines = lines.map(l => '1. ' + l.trim());
+      }
     }
 
-    const newContent = text.substring(0, start) + result + text.substring(end);
-    onUpdate(newContent);
+    const intermediateContent = text.substring(0, lineStart) + resultLines.join('\n') + text.substring(actualEnd);
+    const finalContent = renumberHierarchical(intermediateContent);
+    onUpdate(finalContent);
     
     // Restore focus and selection
     setTimeout(() => {
       if (textareaRef.current) {
         textareaRef.current.focus();
-        textareaRef.current.setSelectionRange(start, start + result.length);
+        const diff = finalContent.length - text.length;
+        textareaRef.current.setSelectionRange(start, Math.max(start, end + diff));
       }
     }, 0);
   };
@@ -728,7 +794,10 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
         "absolute top-0 left-0 right-0 h-10 px-3 flex items-center justify-between bg-muted/30 border-b border-border/50 z-10 transition-opacity duration-200",
         isFocused ? "opacity-100" : "opacity-0 group-hover/block:opacity-100"
       )}>
-        <div className="flex items-center gap-1">
+        <div className={cn(
+          "flex items-center gap-1 transition-opacity duration-200",
+          isFocused ? "opacity-100" : "opacity-0 pointer-events-none"
+        )}>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => applyTextAction('bullet')} disabled={block.isDone}>
