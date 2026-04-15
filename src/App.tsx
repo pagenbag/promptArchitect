@@ -128,6 +128,22 @@ export default function App() {
     projects.find(p => p.id === selectedProjectId) || null
   , [projects, selectedProjectId]);
 
+  const projectPath = useMemo(() => {
+    if (!selectedProjectId) return [];
+    const path: Project[] = [];
+    let currentId: string | null = selectedProjectId;
+    while (currentId) {
+      const project = projects.find(p => p.id === currentId);
+      if (project) {
+        path.unshift(project);
+        currentId = project.parentId;
+      } else {
+        currentId = null;
+      }
+    }
+    return path;
+  }, [projects, selectedProjectId]);
+
   // Scroll to bottom when project changes
   useEffect(() => {
     if (selectedProject && scrollAreaRef.current) {
@@ -270,7 +286,7 @@ export default function App() {
             className={cn(
               "group flex items-center py-2 px-3 rounded-sm cursor-pointer transition-all duration-200",
               isSelected 
-                ? "bg-accent/10 text-accent font-medium" 
+                ? "bg-accent text-accent-foreground font-bold shadow-md" 
                 : "hover:bg-white/5 text-muted-foreground hover:text-foreground"
             )}
             style={{ paddingLeft: `${level * 16 + 12}px` }}
@@ -352,8 +368,8 @@ export default function App() {
           className="border-right border-border flex flex-col overflow-hidden bg-muted/20"
         >
           <div className="p-6 flex items-center justify-between border-b border-border">
-            <div className="flex items-center gap-2 font-serif italic text-xl tracking-wider text-accent">
-              <span>Architect</span>
+            <div className="flex items-center gap-2 font-serif italic text-2xl tracking-wider text-foreground font-black">
+              Architect
             </div>
             <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(false)} className="text-muted-foreground">
               <PanelLeftClose size={18} />
@@ -413,10 +429,22 @@ export default function App() {
             <>
               <header className="py-10 px-12 border-b border-border flex items-center justify-between bg-background/50 backdrop-blur-md sticky top-0 z-20">
                 <div className="flex flex-col gap-2 overflow-hidden flex-1 mr-8">
-                  <div className="flex items-center gap-2 text-muted-foreground text-[10px] uppercase tracking-[2px] font-semibold">
-                    <span>Projects</span>
-                    <ChevronRight size={10} />
-                    <span className="text-accent">{selectedProject.name}</span>
+                  <div className="flex items-center flex-wrap gap-2 text-muted-foreground text-[10px] uppercase tracking-[2px] font-bold">
+                    <span className="hover:text-foreground cursor-pointer transition-colors" onClick={() => setSelectedProjectId(null)}>Projects</span>
+                    {projectPath.map((p, i) => (
+                      <div key={p.id} className="flex items-center gap-2">
+                        <ChevronRight size={10} className="text-muted-foreground/50" />
+                        <span 
+                          className={cn(
+                            "transition-colors cursor-pointer",
+                            i === projectPath.length - 1 ? "text-foreground font-black" : "hover:text-foreground"
+                          )}
+                          onClick={() => setSelectedProjectId(p.id)}
+                        >
+                          {p.name}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                   
                   {editingProjectName !== null ? (
@@ -462,7 +490,7 @@ export default function App() {
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    className="gap-2 border-accent/30 text-accent hover:bg-accent hover:text-background transition-all duration-300"
+                    className="gap-2 border-accent text-foreground font-bold hover:bg-accent hover:text-background transition-all duration-300 shadow-sm"
                     onClick={handleCopyAll}
                   >
                     {isAllCopied ? <Check size={14} /> : <Copy size={14} />}
