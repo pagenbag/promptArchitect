@@ -29,7 +29,9 @@ import {
   IndentIncrease,
   IndentDecrease,
   CheckSquare,
-  Square
+  Square,
+  Keyboard,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/ui/button';
@@ -58,6 +60,7 @@ import { cn } from '@/lib/utils';
 const STORAGE_KEY = 'prompt_architect_data';
 const THEME_KEY = 'prompt_architect_theme';
 const LAST_PROJECT_KEY = 'prompt_architect_last_project';
+const OPEN_TABS_KEY = 'prompt_architect_open_tabs';
 
 function renumberHierarchical(text: string): string {
   const lines = text.split('\n');
@@ -102,6 +105,24 @@ function renumberHierarchical(text: string): string {
   }).join('\n');
 }
 
+function ShortcutItem({ keys, label }: { keys: string[], label: string }) {
+  return (
+    <div className="flex items-center justify-between group">
+      <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">{label}</span>
+      <div className="flex items-center gap-1">
+        {keys.map((key, i) => (
+          <div key={i} className="flex items-center">
+            <kbd className="min-w-[20px] h-6 px-1.5 flex items-center justify-center bg-muted border border-border rounded text-[10px] font-bold text-foreground shadow-sm">
+              {key}
+            </kbd>
+            {i < keys.length - 1 && <span className="text-[10px] text-muted-foreground/50 mx-0.5">+</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -112,6 +133,8 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
+  const [openProjectIds, setOpenProjectIds] = useState<string[]>([]);
+  const [isShortcutsDialogOpen, setIsShortcutsDialogOpen] = useState(false);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -134,11 +157,22 @@ export default function App() {
         const parsed = JSON.parse(savedData);
         setProjects(parsed);
         
+        const savedTabs = localStorage.getItem(OPEN_TABS_KEY);
+        if (savedTabs) {
+          const tabIds = JSON.parse(savedTabs);
+          // Filter out any IDs that might have been deleted
+          const validTabIds = tabIds.filter((id: string) => parsed.some((p: Project) => p.id === id));
+          setOpenProjectIds(validTabIds);
+        }
+
         const lastSelectedId = localStorage.getItem(LAST_PROJECT_KEY);
         if (lastSelectedId && parsed.some((p: Project) => p.id === lastSelectedId)) {
           setSelectedProjectId(lastSelectedId);
+          // Ensure it's in open tabs
+          setOpenProjectIds(prev => prev.includes(lastSelectedId) ? prev : [...prev, lastSelectedId]);
         } else if (parsed.length > 0) {
           setSelectedProjectId(parsed[0].id);
+          setOpenProjectIds([parsed[0].id]);
         }
       } catch (e) {
         console.error('Failed to parse saved data', e);
@@ -158,8 +192,49 @@ export default function App() {
       };
       setProjects([defaultProject]);
       setSelectedProjectId(defaultProject.id);
+      setOpenProjectIds([defaultProject.id]);
     }
   }, []);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Tab switching: Ctrl+Tab and Ctrl+Shift+Tab
+      if (e.ctrlKey && e.key === 'Tab') {
+        e.preventDefault();
+        const currentIndex = openProjectIds.indexOf(selectedProjectId || '');
+        if (currentIndex !== -1) {
+          let nextIndex;
+          if (e.shiftKey) {
+            nextIndex = (currentIndex - 1 + openProjectIds.length) % openProjectIds.length;
+          } else {
+            nextIndex = (currentIndex + 1) % openProjectIds.length;
+          }
+          setSelectedProjectId(openProjectIds[nextIndex]);
+        }
+      }
+
+      // Tab selection: Ctrl+1 to Ctrl+9
+      if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
+        const index = parseInt(e.key) - 1;
+        if (index < openProjectIds.length) {
+          e.preventDefault();
+          setSelectedProjectId(openProjectIds[index]);
+        }
+      }
+
+      // Close tab: Ctrl+W (Note: browser might block this, but good to have)
+      if (e.ctrlKey && e.key === 'w') {
+        if (selectedProjectId) {
+          e.preventDefault();
+          handleCloseTab(selectedProjectId);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [openProjectIds, selectedProjectId]);
 
   // Theme effect
   useEffect(() => {
@@ -184,6 +259,11 @@ export default function App() {
       localStorage.setItem(LAST_PROJECT_KEY, selectedProjectId);
     }
   }, [selectedProjectId]);
+
+  // Save open tabs
+  useEffect(() => {
+    localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(openProjectIds));
+  }, [openProjectIds]);
 
   const selectedProject = useMemo(() => 
     projects.find(p => p.id === selectedProjectId) || null
@@ -229,6 +309,37 @@ export default function App() {
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+
+  const handleOpenProject = (id: string, forceNewTab = false) => {
+    if (forceNewTab) {
+      if (!openProjectIds.includes(id)) {
+        setOpenProjectIds(prev => [...prev, id]);
+      }
+      setSelectedProjectId(id);
+    } else {
+      if (openProjectIds.includes(id)) {
+        setSelectedProjectId(id);
+      } else {
+        setOpenProjectIds(prev => [...prev, id]);
+        setSelectedProjectId(id);
+      }
+    }
+  };
+
+  const handleCloseTab = (id: string, e?: any) => {
+    if (e) e.stopPropagation();
+    
+    const newOpenIds = openProjectIds.filter(openId => openId !== id);
+    setOpenProjectIds(newOpenIds);
+    
+    if (selectedProjectId === id) {
+      if (newOpenIds.length > 0) {
+        setSelectedProjectId(newOpenIds[newOpenIds.length - 1]);
+      } else {
+        setSelectedProjectId(null);
+      }
+    }
   };
 
   const handleCopyAll = () => {
@@ -291,8 +402,15 @@ export default function App() {
     findChildren(id);
 
     setProjects(prev => prev.filter(p => !idsToDelete.has(p.id)));
+    setOpenProjectIds(prev => prev.filter(id => !idsToDelete.has(id)));
+    
     if (selectedProjectId && idsToDelete.has(selectedProjectId)) {
-      setSelectedProjectId(null);
+      const remainingTabs = openProjectIds.filter(id => !idsToDelete.has(id));
+      if (remainingTabs.length > 0) {
+        setSelectedProjectId(remainingTabs[remainingTabs.length - 1]);
+      } else {
+        setSelectedProjectId(null);
+      }
     }
   };
 
@@ -366,7 +484,7 @@ export default function App() {
                 : "hover:bg-white/5 text-muted-foreground hover:text-foreground"
             )}
             style={{ paddingLeft: `${level * 16 + 12}px` }}
-            onClick={() => setSelectedProjectId(item.id)}
+            onClick={(e) => handleOpenProject(item.id, e.ctrlKey || e.metaKey)}
           >
             <div 
               className="p-1 hover:bg-white/10 rounded-sm mr-1 transition-colors"
@@ -479,9 +597,19 @@ export default function App() {
           </div>
 
           <div className="p-4 border-t border-border flex items-center justify-between">
-            <Button variant="ghost" size="icon" onClick={toggleTheme} className="text-muted-foreground hover:text-accent">
-              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" onClick={toggleTheme} className="text-muted-foreground hover:text-accent">
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setIsShortcutsDialogOpen(true)}
+                className="text-muted-foreground hover:text-accent"
+              >
+                <Keyboard size={18} />
+              </Button>
+            </div>
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-accent">
               <Settings size={18} />
             </Button>
@@ -490,6 +618,38 @@ export default function App() {
 
         {/* Main Content */}
         <main className="flex-1 flex flex-col min-w-0 bg-background relative overflow-hidden">
+          {/* Tab Bar */}
+          {openProjectIds.length > 0 && (
+            <div className="flex items-center bg-muted/30 border-b border-border h-10 px-4 gap-1 overflow-x-auto no-scrollbar shrink-0">
+              {openProjectIds.map((id, index) => {
+                const project = projects.find(p => p.id === id);
+                if (!project) return null;
+                const isActive = selectedProjectId === id;
+                return (
+                  <div 
+                    key={id}
+                    className={cn(
+                      "flex items-center h-8 px-3 gap-2 rounded-t-md cursor-pointer transition-all duration-200 min-w-[120px] max-w-[200px] group",
+                      isActive 
+                        ? "bg-background border-x border-t border-border text-foreground font-medium" 
+                        : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                    )}
+                    onClick={() => setSelectedProjectId(id)}
+                  >
+                    <FileText size={14} className={cn(isActive ? "text-accent" : "text-muted-foreground/50")} />
+                    <span className="text-xs truncate flex-1">{project.name}</span>
+                    <button 
+                      className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-muted rounded-sm transition-all"
+                      onClick={(e) => handleCloseTab(id, e)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {!isSidebarOpen && (
             <div className="absolute left-4 top-4 z-30">
               <Button 
@@ -669,6 +829,39 @@ export default function App() {
             </div>
           )}
         </main>
+
+        {/* Keyboard Shortcuts Dialog */}
+        <Dialog open={isShortcutsDialogOpen} onOpenChange={setIsShortcutsDialogOpen}>
+          <DialogContent className="max-w-2xl bg-background border-border shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-serif italic tracking-wide">Keyboard Shortcuts</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-8 py-6">
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-[2px] text-accent">Navigation</h3>
+                <div className="space-y-3">
+                  <ShortcutItem keys={["Ctrl", "Tab"]} label="Next Tab" />
+                  <ShortcutItem keys={["Ctrl", "Shift", "Tab"]} label="Previous Tab" />
+                  <ShortcutItem keys={["Ctrl", "1-9"]} label="Switch to Tab 1-9" />
+                  <ShortcutItem keys={["Ctrl", "Click"]} label="Open in New Tab" />
+                  <ShortcutItem keys={["Ctrl", "W"]} label="Close Current Tab" />
+                </div>
+              </div>
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-[2px] text-accent">Editor</h3>
+                <div className="space-y-3">
+                  <ShortcutItem keys={["Ctrl", "Enter"]} label="Add Block Below" />
+                  <ShortcutItem keys={["Tab"]} label="Indent / Hierarchical List" />
+                  <ShortcutItem keys={["Shift", "Tab"]} label="Outdent" />
+                  <ShortcutItem keys={["Ctrl", "→"]} label="Indent" />
+                  <ShortcutItem keys={["Ctrl", "←"]} label="Outdent" />
+                  <ShortcutItem keys={["Enter"]} label="Maintain List Level" />
+                  <ShortcutItem keys={["Backspace"]} label="Delete Empty Block" />
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={isNewFolderDialogOpen} onOpenChange={setIsNewFolderDialogOpen}>
           <DialogContent className="bg-popover border-border">
