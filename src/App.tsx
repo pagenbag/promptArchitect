@@ -23,7 +23,13 @@ import {
   PlusCircle,
   Sun,
   Moon,
-  Edit2
+  Edit2,
+  List,
+  ListOrdered,
+  IndentIncrease,
+  IndentDecrease,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/ui/button';
@@ -271,6 +277,16 @@ export default function App() {
     updateProjectBlocks(projectId, newBlocks);
   };
 
+  const toggleBlockDone = (projectId: string, blockId: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+
+    const newBlocks = project.blocks.map(b => 
+      b.id === blockId ? { ...b, isDone: !b.isDone } : b
+    );
+    updateProjectBlocks(projectId, newBlocks);
+  };
+
   const renderTree = (parentId: string | null = null, level = 0) => {
     const items = projects.filter(p => p.parentId === parentId)
       .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -286,7 +302,7 @@ export default function App() {
             className={cn(
               "group flex items-center py-2 px-3 rounded-sm cursor-pointer transition-all duration-200",
               isSelected 
-                ? "bg-accent text-accent-foreground font-bold shadow-md" 
+                ? "bg-muted text-foreground font-bold shadow-sm" 
                 : "hover:bg-white/5 text-muted-foreground hover:text-foreground"
             )}
             style={{ paddingLeft: `${level * 16 + 12}px` }}
@@ -303,7 +319,7 @@ export default function App() {
                 isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
               ) : (
                 <div className="w-[14px] flex items-center justify-center">
-                  <div className={cn("w-1 h-1 rounded-full", isSelected ? "bg-accent" : "bg-muted-foreground/30")} />
+                  <div className={cn("w-1 h-1 rounded-full", isSelected ? "bg-foreground/50" : "bg-muted-foreground/30")} />
                 </div>
               )}
             </div>
@@ -365,7 +381,7 @@ export default function App() {
         <motion.aside 
           initial={false}
           animate={{ width: isSidebarOpen ? 280 : 0, opacity: isSidebarOpen ? 1 : 0 }}
-          className="border-right border-border flex flex-col overflow-hidden bg-muted/20"
+          className="h-full border-r border-border flex flex-col overflow-hidden bg-muted/20 shrink-0"
         >
           <div className="p-6 flex items-center justify-between border-b border-border">
             <div className="flex items-center gap-2 font-serif italic text-2xl tracking-wider text-foreground font-black">
@@ -527,7 +543,17 @@ export default function App() {
                         onFocus={() => setFocusBlockId(block.id)}
                         onUpdate={(content) => updateBlockContent(selectedProject.id, block.id, content)}
                         onDelete={() => deleteBlock(selectedProject.id, block.id)}
+                        onToggleDone={() => toggleBlockDone(selectedProject.id, block.id)}
                         onAddBelow={() => addBlock(selectedProject.id, index)}
+                        onDeleteIfEmpty={() => {
+                          if (selectedProject.blocks.length > 1) {
+                            const prevBlock = selectedProject.blocks[index - 1];
+                            deleteBlock(selectedProject.id, block.id);
+                            if (prevBlock) {
+                              setFocusBlockId(prevBlock.id);
+                            }
+                          }
+                        }}
                         canDelete={selectedProject.blocks.length > 1}
                       />
 
@@ -617,16 +643,20 @@ interface BlockItemProps {
   onUpdate: (content: string) => void;
   onDelete: () => void;
   onAddBelow: () => void;
+  onDeleteIfEmpty: () => void;
+  onToggleDone: () => void;
   canDelete: boolean;
 }
 
-function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, canDelete }: BlockItemProps) {
+function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, onDeleteIfEmpty, onToggleDone, canDelete }: BlockItemProps) {
   const [isCopied, setIsCopied] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (isFocused && textareaRef.current) {
       textareaRef.current.focus();
+      const length = textareaRef.current.value.length;
+      textareaRef.current.setSelectionRange(length, length);
     }
   }, [isFocused]);
 
@@ -641,29 +671,127 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
       e.preventDefault();
       onAddBelow();
     }
+    if ((e.key === 'Backspace' || e.key === 'Delete') && block.content === '') {
+      e.preventDefault();
+      onDeleteIfEmpty();
+    }
+  };
+
+  const applyTextAction = (action: 'bullet' | 'number' | 'indent' | 'outdent') => {
+    if (!textareaRef.current || block.isDone) return;
+    
+    const start = textareaRef.current.selectionStart;
+    const end = textareaRef.current.selectionEnd;
+    const text = block.content;
+    const lines = text.substring(start, end).split('\n');
+    
+    let result = '';
+    
+    switch (action) {
+      case 'bullet':
+        result = lines.map(line => line.startsWith('- ') ? line.substring(2) : `- ${line}`).join('\n');
+        break;
+      case 'number':
+        result = lines.map((line, i) => {
+          const match = line.match(/^\d+\. /);
+          return match ? line.substring(match[0].length) : `${i + 1}. ${line}`;
+        }).join('\n');
+        break;
+      case 'indent':
+        result = lines.map(line => `  ${line}`).join('\n');
+        break;
+      case 'outdent':
+        result = lines.map(line => line.startsWith('  ') ? line.substring(2) : line).join('\n');
+        break;
+    }
+
+    const newContent = text.substring(0, start) + result + text.substring(end);
+    onUpdate(newContent);
+    
+    // Restore focus and selection
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(start, start + result.length);
+      }
+    }, 0);
   };
 
   return (
-    <div className="group/block relative bg-card border border-border rounded-sm shadow-xl hover:border-accent transition-all duration-300 overflow-hidden">
-      <div className="p-2 flex items-center justify-between bg-muted/50 border-b border-border/50 opacity-0 group-hover/block:opacity-100 transition-all duration-300">
-        <div className="flex items-center gap-2 px-2">
-          <GripVertical size={14} className="text-muted-foreground/50 cursor-grab active:cursor-grabbing" />
-          <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-[2px]">Section Block</span>
-        </div>
+    <div className={cn(
+      "group/block relative bg-card border border-border rounded-sm shadow-xl transition-all duration-300 overflow-hidden mt-4",
+      isFocused ? "border-muted-foreground/50 ring-1 ring-muted-foreground/10" : "hover:border-muted-foreground/30",
+      block.isDone && "opacity-75 grayscale-[0.5]"
+    )}>
+      {/* Toolbar */}
+      <div className={cn(
+        "absolute top-0 left-0 right-0 h-10 px-3 flex items-center justify-between bg-muted/30 border-b border-border/50 z-10 transition-opacity duration-200",
+        isFocused ? "opacity-100" : "opacity-0 group-hover/block:opacity-100"
+      )}>
         <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => applyTextAction('bullet')} disabled={block.isDone}>
+                <List size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Bullet List</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => applyTextAction('number')} disabled={block.isDone}>
+                <ListOrdered size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Numbered List</TooltipContent>
+          </Tooltip>
+          <Separator orientation="vertical" className="h-4 mx-1" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => applyTextAction('indent')} disabled={block.isDone}>
+                <IndentIncrease size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Indent</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => applyTextAction('outdent')} disabled={block.isDone}>
+                <IndentDecrease size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Outdent</TooltipContent>
+          </Tooltip>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant={block.isDone ? "default" : "ghost"} 
+                size="icon" 
+                className={cn("h-7 w-7", block.isDone && "bg-accent text-accent-foreground")}
+                onClick={onToggleDone}
+              >
+                {block.isDone ? <CheckSquare size={14} /> : <Square size={14} />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{block.isDone ? "Mark as Active" : "Mark as Done"}</TooltipContent>
+          </Tooltip>
+          <Separator orientation="vertical" className="h-4 mx-1" />
           <Button 
-            variant="ghost" 
+            variant="secondary" 
             size="sm" 
-            className="h-6 px-3 text-[10px] font-bold uppercase tracking-wider bg-accent text-background hover:bg-accent/80 rounded-sm"
+            className="h-7 px-3 text-[10px] font-bold uppercase tracking-wider shadow-sm"
             onClick={handleCopy}
           >
             {isCopied ? <Check size={12} /> : 'Copy'}
           </Button>
           {canDelete && (
             <Button 
-              variant="ghost" 
+              variant="secondary" 
               size="icon" 
-              className="h-6 w-6 text-muted-foreground hover:text-destructive"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive shadow-sm"
               onClick={onDelete}
             >
               <Trash2 size={12} />
@@ -678,8 +806,12 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
         onFocus={onFocus}
         onChange={(e) => onUpdate(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Begin writing your protocol..."
-        className="min-h-[140px] border-none focus-visible:ring-0 resize-none p-8 text-lg leading-relaxed bg-transparent font-serif text-foreground/90 placeholder:text-muted-foreground/30"
+        readOnly={block.isDone}
+        placeholder={block.isDone ? "This block is marked as done." : "Begin writing your protocol..."}
+        className={cn(
+          "min-h-[140px] border-none focus-visible:ring-0 resize-none p-8 pt-14 text-lg leading-relaxed bg-transparent font-serif text-foreground/90 placeholder:text-muted-foreground/30 transition-all",
+          block.isDone && "cursor-not-allowed text-muted-foreground"
+        )}
       />
     </div>
   );

@@ -1,6 +1,7 @@
 export interface Block {
   id: string;
   content: string;
+  isDone?: boolean;
 }
 
 export interface Project {
