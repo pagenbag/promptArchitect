@@ -62,41 +62,40 @@ const LAST_PROJECT_KEY = 'prompt_architect_last_project';
 function renumberHierarchical(text: string): string {
   const lines = text.split('\n');
   const counters: number[] = [];
-  let inList = false;
-
+  const activeNumbers: number[] = [];
+  
   return lines.map(line => {
-    const trimmed = line.trim();
-    if (trimmed === '') {
-      inList = false;
-      counters.length = 0;
-      return line;
-    }
-    
     const indentMatch = line.match(/^(  )*/);
     const indentLevel = indentMatch ? indentMatch[0].length / 2 : 0;
-    const startsWithNumber = /^\s*\d+(\.\d+)*\. /.test(line);
     
-    if (startsWithNumber || indentLevel > 0) {
-      inList = true;
-    } else {
-      inList = false;
+    if (indentLevel === 0) {
+      counters.length = 0;
+      activeNumbers.length = 0;
+      // Remove any list numbering at level 0
+      return line.replace(/^(\d+(\.\d+)*\.)\s/, '');
     }
 
-    if (!inList) {
-      counters.length = 0;
-      return line;
+    const idx = indentLevel - 1;
+    
+    // Reset deeper levels
+    if (counters.length > idx + 1) {
+      counters.splice(idx + 1);
+      activeNumbers.splice(idx + 1);
     }
     
-    if (counters.length > indentLevel + 1) {
-      counters.splice(indentLevel + 1);
+    // Initialize this level if needed
+    while (counters.length <= idx) {
+      counters.push(1);
+      activeNumbers.push(0);
     }
     
-    for (let i = 0; i <= indentLevel; i++) {
-      if (counters[i] === undefined) counters[i] = 1;
-    }
+    const currentVal = counters[idx];
+    activeNumbers[idx] = currentVal;
+    counters[idx]++;
     
-    const numberStr = counters.slice(0, indentLevel + 1).join('.') + '.';
-    counters[indentLevel]++;
+    // Construct number string using active numbers of parent levels
+    const numberParts = [...activeNumbers.slice(0, idx), currentVal];
+    const numberStr = numberParts.join('.') + '.';
     
     const cleanContent = line.replace(/^(  )*(\d+(\.\d+)*\.)?/, '').trim();
     return '  '.repeat(indentLevel) + numberStr + ' ' + cleanContent;
@@ -741,24 +740,90 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
       onDeleteIfEmpty();
     }
     
+    // List-aware Enter behavior
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const start = textareaRef.current!.selectionStart;
+      const text = block.content;
+      const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+      const currentLine = text.substring(lineStart, start);
+      
+      const indentMatch = currentLine.match(/^(  )*/);
+      const indent = indentMatch ? indentMatch[0] : '';
+      const listMatch = currentLine.match(/^\s*(\d+(\.\d+)*\.)\s(.*)$/);
+      
+      if (listMatch) {
+        e.preventDefault();
+        const content = listMatch[3].trim();
+        
+        if (content === '') {
+          // 3.2: Enter on a blank list line -> outdent
+          if (indent.length >= 2) {
+            const newIndent = indent.substring(2);
+            const newLine = newIndent + '1. '; // renumbering will fix
+            const newText = text.substring(0, lineStart) + newLine + text.substring(start);
+            const finalContent = renumberHierarchical(newText);
+            onUpdate(finalContent);
+            setTimeout(() => {
+              if (textareaRef.current) {
+                const newPos = lineStart + newLine.length;
+                textareaRef.current.setSelectionRange(newPos, newPos);
+              }
+            }, 0);
+          } else {
+            // Outdent from level 1 to level 0 (plain text)
+            const newText = text.substring(0, lineStart) + '' + text.substring(start);
+            onUpdate(newText);
+            setTimeout(() => {
+              if (textareaRef.current) {
+                textareaRef.current.setSelectionRange(lineStart, lineStart);
+              }
+            }, 0);
+          }
+        } else {
+          // 3.1: Enter on a non-blank list line -> keep indentation
+          const newText = text.substring(0, start) + '\n' + indent + '1. ' + text.substring(start);
+          const finalContent = renumberHierarchical(newText);
+          onUpdate(finalContent);
+          setTimeout(() => {
+            if (textareaRef.current) {
+              // Find the new line start and position cursor after the list prefix
+              const lines = finalContent.split('\n');
+              const currentLineIndex = finalContent.substring(0, start).split('\n').length;
+              const nextLine = lines[currentLineIndex];
+              const prefixMatch = nextLine.match(/^\s*(\d+(\.\d+)*\.)\s/);
+              const prefixLen = prefixMatch ? prefixMatch[0].length : 0;
+              
+              let newPos = 0;
+              for (let i = 0; i < currentLineIndex; i++) {
+                newPos += lines[i].length + 1;
+              }
+              newPos += prefixLen;
+              textareaRef.current.setSelectionRange(newPos, newPos);
+            }
+          }, 0);
+        }
+        return;
+      }
+    }
+    
     // Tab support
     if (e.key === 'Tab') {
       e.preventDefault();
-      applyTextAction(e.shiftKey ? 'outdent' : 'indent');
+      applyTextAction(e.shiftKey ? 'outdent' : 'indent', true);
     }
     
     // Ctrl + Arrows
     if (e.ctrlKey && e.key === 'ArrowRight') {
       e.preventDefault();
-      applyTextAction('indent');
+      applyTextAction('indent', true);
     }
     if (e.ctrlKey && e.key === 'ArrowLeft') {
       e.preventDefault();
-      applyTextAction('outdent');
+      applyTextAction('outdent', true);
     }
   };
 
-  const applyTextAction = (action: 'bullet' | 'number' | 'indent' | 'outdent') => {
+  const applyTextAction = (action: 'bullet' | 'number' | 'indent' | 'outdent', smart = false) => {
     if (!textareaRef.current || block.isDone) return;
     
     const start = textareaRef.current.selectionStart;
@@ -791,7 +856,7 @@ function BlockItem({ block, isFocused, onFocus, onUpdate, onDelete, onAddBelow, 
     }
 
     const intermediateContent = text.substring(0, lineStart) + resultLines.join('\n') + text.substring(actualEnd);
-    const finalContent = renumberHierarchical(intermediateContent);
+    const finalContent = smart ? renumberHierarchical(intermediateContent) : intermediateContent;
     onUpdate(finalContent);
     
     // Restore focus and selection
